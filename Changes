@@ -1,0 +1,8 @@
+Revision history for Perl extension Code::Splice.
+
+0.01  Tue Feb  6 01:09:43 2007
+	- original version; created by h2xs 1.23 with options
+		-X -n Code::Splice
+
+0.02  Fri Nov  9 00:47:48 EST 2012
+    - t/04.t was failing.  It may have always failed.  Moving where pad entries get reassigned seems to have made re-threading the byte code work.
