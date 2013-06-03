@@ -4,7 +4,9 @@ use 5.008;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
+
+our @keep_coderefs_forever;
 
 <<comment;
 
@@ -53,6 +55,8 @@ sub inject {
     my $code = delete $args{code};          # what to insert
     my $package = delete $args{package};    # where to insert it
     my $method = delete $args{method};
+
+    push @keep_coderefs_forever, $code; # avoid gc
 
     # user-provided arrays-of-code specifications of where to inject at
 
@@ -191,6 +195,7 @@ sub inject {
 
     my $curcop;
     my $codeline;
+    my $curlinenum;
 
     my $look_for_things_to_diddle = sub {
      
@@ -218,6 +223,13 @@ sub inject {
             my $prev_sibling = $siblings->{$$op}; # may be undef
             my $next_sibling = $op->sibling;      # may be undef
 
+            # modify the $newoplast to have the same OPf_WANT flags as $prev_sibling
+            my $old_flags = $prev_sibling->flags;
+            my $new_flags = $newoplast->flags;
+            $new_flags &= ~ OPf_WANT;  # mask off the WANT bits
+            $new_flags |= ( $old_flags & OPf_WANT ); # add in the WANT bits from the old op in that position
+            $newoplast->flags($new_flags); # write them back
+
             $prev_sibling->sibling($newopfirst) if $prev_sibling and $$prev_sibling;
             $newoplast->sibling($op->sibling) if $op->sibling and ${$op->sibling};
     
@@ -236,16 +248,18 @@ sub inject {
         };
 
         $curcop = $op if $op->name eq 'nextstate';
-        $codeline = $codelines[$curcop->line] if $curcop and defined $codelines[$curcop->line];
+        $curlinenum = $curcop->line if $curcop;
+        $codeline = $codelines[$curlinenum] if $curlinenum and defined $codelines[$curlinenum];
+        $codeline or return;
  
         for my $post (@$postconditions) {
-            if($post->($op, $codeline)) {
+            if($post->($op, $codeline, $curlinenum)) {
                 die "post condition true before insert point found: ". B::Deparse->new->coderef2text($post);
             }
         }
 
         for my $i (0 .. @$preconditions-1) {
-            if($preconditions->[$i]->($op, $codeline)) {
+            if($preconditions->[$i]->($op, $codeline, $curlinenum)) {
                 splice @$preconditions, $i, 1, ();
             }
         }
@@ -408,11 +422,13 @@ Code::Splice - Injects the contents of one subroutine at a specified point elsew
     precondition => sub { 
       my $op = shift; 
       my $line = shift;
+      my $linenum = shift;
       $line =~ m/print/ and $line =~ m/four/;
     },
     postcondition => sub { 
       my $op = shift; 
       my $line = shift;
+      my $linenum = shift;
       $line =~ m/print/ and $line =~ m/five/;
     },
   );
